@@ -2,6 +2,7 @@ package amd64
 
 import (
 	"encoding/binary"
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -44,12 +45,12 @@ func addressOf(v *byte) uint64 {
 }
 
 func TestAdjustClonedStack(t *testing.T) {
-	// In order to allocate slices on Go heap, we need to allocSlice function.
-	allocSlice := func(size int) []byte {
-		return make([]byte, size)
-	}
+	// In order to prevent the stacks from changing addresses, we must pin them.
+	pinner := runtime.Pinner{}
+	defer pinner.Unpin()
 
-	oldStack := allocSlice(512)
+	oldStack := make([]byte, 512)
+	pinner.Pin(&oldStack[0])
 	oldRsp := uintptr(unsafe.Pointer(&oldStack[0]))
 	oldTop := uintptr(unsafe.Pointer(&oldStack[len(oldStack)-1]))
 	rbpIndex := uintptr(32)
@@ -57,10 +58,11 @@ func TestAdjustClonedStack(t *testing.T) {
 	binary.LittleEndian.PutUint64(oldStack[rbpIndex+16:], addressOf(&oldStack[32+rbpIndex]))
 	binary.LittleEndian.PutUint64(oldStack[rbpIndex+32:], addressOf(&oldStack[160+rbpIndex]))
 
-	newStack := allocSlice(1024)
+	newStack := make([]byte, 1024)
+	pinner.Pin(&newStack[0])
 	rsp := uintptr(unsafe.Pointer(&newStack[0]))
 	rbp := rsp + rbpIndex
-	// Coy old stack to new stack which contains the old pointers to the old stack elements.
+	// Copy old stack to new stack which contains the old pointers to the old stack elements.
 	copy(newStack, oldStack)
 
 	AdjustClonedStack(oldRsp, oldTop, rsp, rbp, uintptr(addressOf(&newStack[len(newStack)-1])))
